@@ -30,7 +30,6 @@ module Development.IDE.Core.Rules(
     usePropertyAction,
     -- * Rules
     CompiledLinkables(..),
-    IsHiFileStable(..),
     getParsedModuleRule,
     getParsedModuleWithCommentsRule,
     getLocatedImportsRule,
@@ -42,7 +41,6 @@ module Development.IDE.Core.Rules(
     getModIfaceFromDiskRule,
     getModIfaceRule,
     getModSummaryRule,
-    isHiFileStableRule,
     getModuleGraphRule,
     knownFilesRule,
     getClientSettingsRule,
@@ -661,13 +659,11 @@ typeCheckRuleDefinition hsc pm = do
 
 -- | Get all the linkables stored in the graph, i.e. the ones we *do not* need to unload.
 -- Doesn't actually contain the code, since we don't need it to unload
-currentLinkables :: Action [Linkable]
+currentLinkables :: Action (ModuleEnv UTCTime)
 currentLinkables = do
     compiledLinkables <- getCompiledLinkables <$> getIdeGlobalAction
     hm <- liftIO $ readVar compiledLinkables
-    pure $ map go $ moduleEnvToList hm
-  where
-    go (mod, time) = LM time mod []
+    pure hm
 
 loadGhcSession :: GhcSessionDepsConfig -> Rules ()
 loadGhcSession ghcSessionDepsConfig = do
@@ -745,15 +741,25 @@ ghcSessionDepsDefinition fullModSummary GhcSessionDepsConfig{..} env file = do
 -- | Load a iface from disk, or generate it if there isn't one or it is out of date
 -- This rule also ensures that the `.hie` and `.o` (if needed) files are written out.
 getModIfaceFromDiskRule :: Rules ()
-getModIfaceFromDiskRule = defineEarlyCutoff $ Rule $ \GetModIfaceFromDisk f -> do
+getModIfaceFromDiskRule = defineEarlyCutoff $ RuleWithOldValue $ \GetModIfaceFromDisk f old -> do
   ms <- msrModSummary <$> use_ GetModSummary f
   mb_session <- use GhcSessionDeps f
   case mb_session of
     Nothing -> return (Nothing, ([], Nothing))
     Just session -> do
-      sourceModified <- use_ IsHiFileStable f
       linkableType <- getLinkableType f
-      r <- loadInterface (hscEnv session) ms sourceModified linkableType (regenerateHiFile session f ms)
+      ver <- use_ GetModificationTime f
+      let m_old = case old of
+            Shake.Succeeded (Just old_version) v -> Just (v, old_version)
+            Shake.Stale _   (Just old_version) v -> Just (v, old_version)
+            _ -> Nothing
+          recompInfo = RecompilationInfo
+            { source_version = ver
+            , old_value = m_old
+            , get_file_version = use GetModificationTime_{missingFileDiagnostics = False}
+            , regenerate = regenerateHiFile session f ms
+            }
+      r <- loadInterface (hscEnv session) ms linkableType recompInfo
       case r of
         (diags, Nothing) -> return (Nothing, (diags, Nothing))
         (diags, Just x) -> do
@@ -803,31 +809,6 @@ getModIfaceFromDiskAndIndexRule =
           indexHieFile se ms f hash hf
 
   return (Just x)
-
-isHiFileStableRule :: Rules ()
-isHiFileStableRule = defineEarlyCutoff $ RuleNoDiagnostics $ \IsHiFileStable f -> do
-    ms <- msrModSummary <$> use_ GetModSummaryWithoutTimestamps f
-    let hiFile = toNormalizedFilePath'
-                $ Compat.ml_hi_file $ ms_location ms
-    mbHiVersion <- use  GetModificationTime_{missingFileDiagnostics=False} hiFile
-    modVersion  <- use_ GetModificationTime f
-    sourceModified <- case mbHiVersion of
-        Nothing -> pure SourceModified
-        Just x ->
-            if modificationTime x < modificationTime modVersion
-                then pure SourceModified
-                else do
-                    fileImports <- use_ GetLocatedImports f
-                    let imports = fmap artifactFilePath . snd <$> fileImports
-                    deps <- uses_ IsHiFileStable (catMaybes imports)
-                    pure $ if all (== SourceUnmodifiedAndStable) deps
-                           then SourceUnmodifiedAndStable
-                           else SourceUnmodified
-    return (Just (summarize sourceModified), Just sourceModified)
-  where
-      summarize SourceModified            = BS.singleton 1
-      summarize SourceUnmodified          = BS.singleton 2
-      summarize SourceUnmodifiedAndStable = BS.singleton 3
 
 displayTHWarning :: LspT c IO ()
 displayTHWarning
@@ -1124,7 +1105,6 @@ mainRule RulesConfig{..} = do
     getModIfaceFromDiskAndIndexRule
     getModIfaceRule
     getModSummaryRule
-    isHiFileStableRule
     getModuleGraphRule
     knownFilesRule
     getClientSettingsRule
@@ -1146,13 +1126,3 @@ mainRule RulesConfig{..} = do
     persistentHieFileRule
     persistentDocMapRule
     persistentImportMapRule
-
--- | Given the path to a module src file, this rule returns True if the
--- corresponding `.hi` file is stable, that is, if it is newer
---   than the src file, and all its dependencies are stable too.
-data IsHiFileStable = IsHiFileStable
-    deriving (Eq, Show, Typeable, Generic)
-instance Hashable IsHiFileStable
-instance NFData   IsHiFileStable
-
-type instance RuleResult IsHiFileStable = SourceModified

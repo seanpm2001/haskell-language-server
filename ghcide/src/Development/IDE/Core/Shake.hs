@@ -986,6 +986,7 @@ data RuleBody k v
     { newnessCheck :: BS.ByteString -> BS.ByteString -> Bool
     , build :: k -> NormalizedFilePath -> Action (Maybe BS.ByteString, Maybe v)
     }
+  | RuleWithOldValue (k -> NormalizedFilePath -> Value v -> Action (Maybe BS.ByteString, IdeResult v))
 
 -- | Define a new Rule with early cutoff
 defineEarlyCutoff
@@ -997,13 +998,13 @@ defineEarlyCutoff (Rule op) = addRule $ \(Q (key, file)) (old :: Maybe BS.ByteSt
     let diagnostics diags = do
             traceDiagnostics diags
             updateFileDiagnostics file (Key key) extras . map (\(_,y,z) -> (y,z)) $ diags
-    defineEarlyCutoff' diagnostics (==) key file old mode $ op key file
+    defineEarlyCutoff' diagnostics (==) key file old mode $ const $ op key file
 defineEarlyCutoff (RuleNoDiagnostics op) = addRule $ \(Q (key, file)) (old :: Maybe BS.ByteString) mode -> otTracedAction key file mode traceA $ \traceDiagnostics -> do
     ShakeExtras{logger} <- getShakeExtras
     let diagnostics diags = do
             traceDiagnostics diags
             mapM_ (\d -> liftIO $ logWarning logger $ showDiagnosticsColored [d]) diags
-    defineEarlyCutoff' diagnostics (==) key file old mode $ second (mempty,) <$> op key file
+    defineEarlyCutoff' diagnostics (==) key file old mode $ const $ second (mempty,) <$> op key file
 defineEarlyCutoff RuleWithCustomNewnessCheck{..} =
     addRule $ \(Q (key, file)) (old :: Maybe BS.ByteString) mode ->
         otTracedAction key file mode traceA $ \ traceDiagnostics -> do
@@ -1012,7 +1013,13 @@ defineEarlyCutoff RuleWithCustomNewnessCheck{..} =
                     mapM_ (\d -> liftIO $ logWarning logger $ showDiagnosticsColored [d]) diags
                     traceDiagnostics diags
             defineEarlyCutoff' diagnostics newnessCheck key file old mode $
-                second (mempty,) <$> build key file
+                const $ second (mempty,) <$> build key file
+defineEarlyCutoff (RuleWithOldValue op) = addRule $ \(Q (key, file)) (old :: Maybe BS.ByteString) mode -> otTracedAction key file mode traceA $ \traceDiagnostics -> do
+    extras <- getShakeExtras
+    let diagnostics diags = do
+            traceDiagnostics diags
+            updateFileDiagnostics file (Key key) extras . map (\(_,y,z) -> (y,z)) $ diags
+    defineEarlyCutoff' diagnostics (==) key file old mode $ op key file
 
 defineNoFile :: IdeRule k v => (k -> Action v) -> Rules ()
 defineNoFile f = defineNoDiagnostics $ \k file -> do
@@ -1025,7 +1032,7 @@ defineEarlyCutOffNoFile f = defineEarlyCutoff $ RuleNoDiagnostics $ \k file -> d
         fail $ "Rule " ++ show k ++ " should always be called with the empty string for a file"
 
 defineEarlyCutoff'
-    :: IdeRule k v
+    :: forall k v. IdeRule k v
     => ([FileDiagnostic] -> Action ()) -- ^ update diagnostics
     -- | compare current and previous for freshness
     -> (BS.ByteString -> BS.ByteString -> Bool)
@@ -1033,7 +1040,7 @@ defineEarlyCutoff'
     -> NormalizedFilePath
     -> Maybe BS.ByteString
     -> RunMode
-    -> Action (Maybe BS.ByteString, IdeResult v)
+    -> (Value v -> Action (Maybe BS.ByteString, IdeResult v))
     -> Action (RunResult (A (RuleResult k)))
 defineEarlyCutoff' doDiagnostics cmp key file old mode action = do
     ShakeExtras{state, progress, dirtyKeys} <- getShakeExtras
@@ -1063,7 +1070,7 @@ defineEarlyCutoff' doDiagnostics cmp key file old mode action = do
                   Just (Failed b, _)        -> Failed b
 
                 (bs, (diags, res)) <- actionCatch
-                    (do v <- action; liftIO $ evaluate $ force v) $
+                    (do v <- action staleV; liftIO $ evaluate $ force v) $
                     \(e :: SomeException) -> do
                         pure (Nothing, ([ideErrorText file $ T.pack $ show e | not $ isBadDependency e],Nothing))
 
