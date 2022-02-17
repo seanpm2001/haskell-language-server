@@ -57,7 +57,7 @@ runLanguageServer
     -> config
     -> (config -> Value -> Either T.Text config)
     -> LSP.Handlers (ServerM config)
-    -> (LSP.LanguageContextEnv config -> VFSHandle -> Maybe FilePath -> WithHieDb -> IndexQueue -> IO IdeState)
+    -> (LSP.LanguageContextEnv config -> Maybe FilePath -> WithHieDb -> IndexQueue -> IO IdeState)
     -> IO ()
 runLanguageServer options inH outH getHieDbLoc defaultConfig onConfigurationChange userHandlers getIdeState = do
 
@@ -142,7 +142,7 @@ runLanguageServer options inH outH getHieDbLoc defaultConfig onConfigurationChan
             dbMVar <- newEmptyMVar
             ~(WithHieDbShield withHieDb,hieChan) <- unsafeInterleaveIO $ takeMVar dbMVar
 
-            ide <- getIdeState env (makeLSPVFSHandle env) root withHieDb hieChan
+            ide <- getIdeState env root withHieDb hieChan
 
             let initConfig = parseConfiguration params
             logInfo (ideLogger ide) $ T.pack $ "Registering ide configuration: " <> show initConfig

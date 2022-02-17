@@ -36,8 +36,7 @@ import           Development.IDE                       (Action, GhcVersion (..),
                                                         hDuplicateTo')
 import           Development.IDE.Core.Debouncer        (Debouncer,
                                                         newAsyncDebouncer)
-import           Development.IDE.Core.FileStore        (isWatchSupported,
-                                                        makeVFSHandle)
+import           Development.IDE.Core.FileStore        (isWatchSupported)
 import           Development.IDE.Core.IdeConfiguration (IdeConfiguration (..),
                                                         registerIdeConfiguration)
 import           Development.IDE.Core.OfInterest       (FileOfInterestStatus (OnDisk),
@@ -276,7 +275,7 @@ defaultMain Arguments{..} = flip withHeapStats fun =<< argsLogger
             t <- offsetTime
             logInfo logger "Starting LSP server..."
             logInfo logger "If you are seeing this in a terminal, you probably should have run WITHOUT the --lsp option!"
-            runLanguageServer options inH outH argsGetHieDbLoc argsDefaultHlsConfig argsOnConfigChange (pluginHandlers plugins) $ \env vfs rootPath withHieDb hieChan -> do
+            runLanguageServer options inH outH argsGetHieDbLoc argsDefaultHlsConfig argsOnConfigChange (pluginHandlers plugins) $ \env rootPath withHieDb hieChan -> do
                 traverse_ IO.setCurrentDirectory rootPath
                 t <- t
                 logInfo logger $ T.pack $ "Started LSP server in " ++ showDuration t
@@ -316,7 +315,6 @@ defaultMain Arguments{..} = flip withHeapStats fun =<< argsLogger
                     logger
                     debouncer
                     options
-                    vfs
                     withHieDb
                     hieChan
             dumpSTMStats
@@ -344,7 +342,6 @@ defaultMain Arguments{..} = flip withHeapStats fun =<< argsLogger
             putStrLn $ "Found " ++ show n ++ " cradle" ++ ['s' | n /= 1]
             when (n > 0) $ putStrLn $ "  (" ++ intercalate ", " (catMaybes ucradles) ++ ")"
             putStrLn "\nStep 3/4: Initializing the IDE"
-            vfs <- makeVFSHandle
             sessionLoader <- loadSessionWithOptions argsSessionLoadingOptions dir
             let def_options = argsIdeOptions argsDefaultHlsConfig sessionLoader
                 options = def_options
@@ -352,7 +349,7 @@ defaultMain Arguments{..} = flip withHeapStats fun =<< argsLogger
                         , optCheckProject = pure False
                         , optModifyDynFlags = optModifyDynFlags def_options <> pluginModifyDynflags plugins
                         }
-            ide <- initialise argsDefaultHlsConfig rules Nothing logger debouncer options vfs hiedb hieChan
+            ide <- initialise argsDefaultHlsConfig rules Nothing logger debouncer options hiedb hieChan
             shakeSessionInit ide
             registerIdeConfiguration (shakeExtras ide) $ IdeConfiguration mempty (hashed Nothing)
 
@@ -398,7 +395,6 @@ defaultMain Arguments{..} = flip withHeapStats fun =<< argsLogger
           root <-  maybe IO.getCurrentDirectory return argsProjectRoot
           dbLoc <- getHieDbLoc root
           runWithDb logger dbLoc $ \hiedb hieChan -> do
-            vfs <- makeVFSHandle
             sessionLoader <- loadSessionWithOptions argsSessionLoadingOptions "."
             let def_options = argsIdeOptions argsDefaultHlsConfig sessionLoader
                 options = def_options
@@ -406,7 +402,7 @@ defaultMain Arguments{..} = flip withHeapStats fun =<< argsLogger
                     , optCheckProject = pure False
                     , optModifyDynFlags = optModifyDynFlags def_options <> pluginModifyDynflags plugins
                     }
-            ide <- initialise argsDefaultHlsConfig rules Nothing logger debouncer options vfs hiedb hieChan
+            ide <- initialise argsDefaultHlsConfig rules Nothing logger debouncer options hiedb hieChan
             shakeSessionInit ide
             registerIdeConfiguration (shakeExtras ide) $ IdeConfiguration mempty (hashed Nothing)
             c ide

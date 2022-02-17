@@ -28,6 +28,24 @@ packages:
          ./plugins/hls-alternate-number-format-plugin
          ./plugins/hls-selection-range-plugin
 
+source-repository-package
+  type: git
+  location: https://github.com/haskell/lsp
+  tag: 63de2845c2dd6d33568696f8652b8fd65fae6b72
+  subdir: lsp
+
+source-repository-package
+  type: git
+  location: https://github.com/haskell/lsp
+  tag: 63de2845c2dd6d33568696f8652b8fd65fae6b72
+  subdir: lsp-types
+
+source-repository-package
+  type: git
+  location: https://github.com/haskell/lsp
+  tag: 63de2845c2dd6d33568696f8652b8fd65fae6b72
+  subdir: lsp-test
+
 tests: true
 
 package *

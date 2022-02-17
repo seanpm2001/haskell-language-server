@@ -84,6 +84,7 @@ import qualified Data.HashMap.Strict                          as HM
 import qualified Data.HashSet                                 as HashSet
 import           Data.Hashable
 import           Data.IORef
+import           Control.Concurrent.STM.TVar
 import           Data.IntMap.Strict                           (IntMap)
 import qualified Data.IntMap.Strict                           as IntMap
 import           Data.List
@@ -150,6 +151,7 @@ import Control.Concurrent.STM.Stats (atomically)
 import Language.LSP.Server (LspT)
 import System.Info.Extra (isWindows)
 import HIE.Bios.Ghc.Gap (hostIsDynamic)
+import qualified Development.IDE.Types.Shake as Shake
 
 templateHaskellInstructions :: T.Text
 templateHaskellInstructions = "https://haskell-language-server.readthedocs.io/en/latest/troubleshooting.html#static-binaries"
@@ -376,7 +378,7 @@ type RawDepM a = StateT (RawDependencyInformation, IntMap ArtifactsLocation) Act
 execRawDepM :: Monad m => StateT (RawDependencyInformation, IntMap a1) m a2 -> m (RawDependencyInformation, IntMap a1)
 execRawDepM act =
     execStateT act
-        ( RawDependencyInformation IntMap.empty emptyPathIdMap IntMap.empty
+        ( RawDependencyInformation IntMap.empty emptyPathIdMap IntMap.empty IntMap.empty
         , IntMap.empty
         )
 
@@ -403,6 +405,11 @@ rawDependencyInformation fs = do
           let al = modSummaryToArtifactsLocation f msum
           -- Get a fresh FilePathId for the new file
           fId <- getFreshFid al
+          -- Record this module and its location
+          whenJust msum $ \ms ->
+            modifyRawDepInfo (\rd -> rd { rawModuleNameMap = IntMap.insert (coerce fId)
+                                                                           (coerce (moduleName $ ms_mod ms))
+                                                                           (rawModuleNameMap rd)})
           -- Adding an edge to the bootmap so we can make sure to
           -- insert boot nodes before the real files.
           addBootMap al fId
@@ -524,12 +531,11 @@ getHieAstsRule =
 persistentHieFileRule :: Rules ()
 persistentHieFileRule = addPersistentRule GetHieAst $ \file -> runMaybeT $ do
   res <- readHieFileForSrcFromDisk file
-  vfs <- asks vfs
-  (currentSource,ver) <- liftIO $ do
-    mvf <- getVirtualFile vfs $ filePathToUri' file
-    case mvf of
-      Nothing -> (,Nothing) . T.decodeUtf8 <$> BS.readFile (fromNormalizedFilePath file)
-      Just vf -> pure (Rope.toText $ _text vf, Just $ _lsp_version vf)
+  vfsRef <- asks vfs
+  vfsData <- liftIO $ vfsMap <$> readTVarIO vfsRef
+  (currentSource, ver) <- liftIO $ case M.lookup (filePathToUri' file) vfsData of
+    Nothing -> (,Nothing) . T.decodeUtf8 <$> BS.readFile (fromNormalizedFilePath file)
+    Just vf -> pure (Rope.toText $ _text vf, Just $ _lsp_version vf)
   let refmap = Compat.generateReferencesMap . Compat.getAsts . Compat.hie_asts $ res
       del = deltaFromDiff (T.decodeUtf8 $ Compat.hie_hs_src res) currentSource
   pure (HAR (Compat.hie_module res) (Compat.hie_asts res) refmap mempty (HieFromDisk res),del,ver)

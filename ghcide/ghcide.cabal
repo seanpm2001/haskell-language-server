@@ -50,6 +50,7 @@ library
         dlist,
         exceptions,
         extra >= 1.7.4,
+        enummapset,
         fuzzy,
         filepath,
         fingertree,
@@ -64,8 +65,8 @@ library
         lens,
         list-t,
         hiedb == 0.4.1.*,
-        lsp-types ^>= 1.4.0.1,
-        lsp ^>= 1.4.0.0 ,
+        lsp-types ^>= 1.5.0.0,
+        lsp ^>= 1.5.0.0 ,
         monoid-subclasses,
         mtl,
         network-uri,
@@ -148,6 +149,7 @@ library
         Development.IDE.Main.HeapStats
         Development.IDE.Core.Debouncer
         Development.IDE.Core.FileStore
+        Development.IDE.Core.FileUtils
         Development.IDE.Core.IdeConfiguration
         Development.IDE.Core.OfInterest
         Development.IDE.Core.PositionMapping

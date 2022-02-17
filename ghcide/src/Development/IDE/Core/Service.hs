@@ -44,11 +44,10 @@ initialise :: Config
            -> Logger
            -> Debouncer LSP.NormalizedUri
            -> IdeOptions
-           -> VFSHandle
            -> WithHieDb
            -> IndexQueue
            -> IO IdeState
-initialise defaultConfig mainRule lspEnv logger debouncer options vfs withHieDb hiedbChan = do
+initialise defaultConfig mainRule lspEnv logger debouncer options withHieDb hiedbChan = do
     shakeProfiling <- do
         let fromConf = optShakeProfiling options
         fromEnv <- lookupEnv "GHCIDE_BUILD_PROFILING"
@@ -63,12 +62,11 @@ initialise defaultConfig mainRule lspEnv logger debouncer options vfs withHieDb 
         (optTesting options)
         withHieDb
         hiedbChan
-        vfs
         (optShakeOptions options)
           $ do
             addIdeGlobal $ GlobalIdeOptions options
             ofInterestRules
-            fileExistsRules lspEnv vfs
+            fileExistsRules lspEnv
             mainRule
 
 -- | Shutdown the Compiler Service.
